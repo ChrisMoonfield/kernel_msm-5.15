@@ -37,6 +37,31 @@ on:
           - "noksu"
           - "ksu"
           - "both"
+      buildQcacldInjection:
+        description: "Add QCACLD-3.0 WiFi monitor-mode/injection support (sapphire)?"
+        required: true
+        type: boolean
+        default: false
+      qcacldSourceURL:
+        description: "QCACLD-3.0 driver source URL"
+        required: false
+        type: string
+        default: "https://github.com/kimocoder/qcacld-3.0"
+      qcacldBranch:
+        description: "QCACLD-3.0 branch"
+        required: false
+        type: string
+        default: "master"
+      qcacldPath:
+        description: "Path inside kernel tree where qcacld-3.0 should be placed"
+        required: false
+        type: string
+        default: "techpack/wlan"
+      qcacldInjectionPatchURL:
+        description: "Raw URL of the packet-injection patch to apply to qcacld-3.0 (leave empty to skip patching and only wire up configs)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   Build-Kernel:
@@ -128,6 +153,45 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
+
+      - name: "📶 Setup QCACLD-3.0 WiFi Injection (sapphire)"
+        if: ${{ inputs.buildQcacldInjection == true }}
+        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
+        run: |
+          set -e
+          QCACLD_PATH="${{ github.event.inputs.qcacldPath }}"
+          echo "📦 Cloning qcacld-3.0 from ${{ github.event.inputs.qcacldSourceURL }} (${{ github.event.inputs.qcacldBranch }}) into $QCACLD_PATH ..."
+
+          rm -rf "$QCACLD_PATH"
+          mkdir -p "$(dirname "$QCACLD_PATH")"
+          git clone --depth=1 --branch "${{ github.event.inputs.qcacldBranch }}" \
+            "${{ github.event.inputs.qcacldSourceURL }}" "$QCACLD_PATH"
+
+          # Apply the packet-injection patch if a URL was provided
+          if [ -n "${{ github.event.inputs.qcacldInjectionPatchURL }}" ]; then
+            echo "🔧 Downloading and applying injection patch..."
+            curl -fL "${{ github.event.inputs.qcacldInjectionPatchURL }}" -o /tmp/qcacld_injection.patch
+            (cd "$QCACLD_PATH" && patch -p1 < /tmp/qcacld_injection.patch) \
+              || echo "⚠️ Injection patch failed to apply cleanly — verify it matches this qcacld-3.0 branch/commit"
+          else
+            echo "ℹ️ No injection patch URL supplied — skipping patch step (only wiring up Kconfig)"
+          fi
+
+          # Wire monitor-mode / packet-injection related Kconfig options into the defconfig.
+          # NOTE: exact option names/availability depend on the qcacld-3.0 branch you use above —
+          # verify against that branch's Kconfig before relying on this for a real build.
+          CONFIG_FILE="arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          cat >> "$CONFIG_FILE" << 'EOF'
+          CONFIG_QCA_CLD_WLAN=m
+          CONFIG_CNSS2=y
+          CONFIG_CNSS_QCA6390=y
+          CONFIG_CNSS_GENL=y
+          CONFIG_WLAN_FEATURE_PACKET_CAPTURE_V2=y
+          CONFIG_QCA_MONITOR_2_0_SUPPORT=y
+          CONFIG_FEATURE_MONITOR_MODE_SUPPORT=y
+          EOF
+
+          echo "✅ qcacld-3.0 wired into $QCACLD_PATH with injection configs appended"
 
       - name: "🔧 Setup ReSukiSU"
         if: matrix.variant == 'ksu'
