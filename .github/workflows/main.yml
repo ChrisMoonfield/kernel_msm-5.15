@@ -37,31 +37,6 @@ on:
           - "noksu"
           - "ksu"
           - "both"
-      buildQcacldInjection:
-        description: "Add QCACLD-3.0 WiFi monitor-mode/injection support (sapphire)?"
-        required: true
-        type: boolean
-        default: false
-      qcacldSourceURL:
-        description: "QCACLD-3.0 driver source URL"
-        required: false
-        type: string
-        default: "https://github.com/kimocoder/qcacld-3.0"
-      qcacldBranch:
-        description: "QCACLD-3.0 branch"
-        required: false
-        type: string
-        default: "master"
-      qcacldPath:
-        description: "Path inside kernel tree where qcacld-3.0 should be placed"
-        required: false
-        type: string
-        default: "techpack/wlan"
-      qcacldInjectionPatchURL:
-        description: "Raw URL of the packet-injection patch to apply to qcacld-3.0 (leave empty to skip patching and only wire up configs)"
-        required: false
-        type: string
-        default: ""
 
 jobs:
   Build-Kernel:
@@ -106,92 +81,82 @@ jobs:
       - name: "📥 Initialize repo"
         working-directory: ${{ env.WORK_DIR}}
         run: |
-         repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
-         repo sync --optimized-fetch --prune --no-clone-bundle --no-tags -j$(nproc --all)
-    
-         rm -rf .repo
-         rm -rf common
-
-         # Clean up old Clang versions
-         rm -rf prebuilts/clang/host/linux-x86/clang-3289846
-         rm -rf prebuilts/clang/host/linux-x86/clang-stable
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
+          repo sync --optimized-fetch --prune --no-clone-bundle --no-tags -j$(nproc --all)
          
-         sed -i \
-          -e 's/^BRANCH=.*/BRANCH=android13-5.15/' \
-          -e 's/^CLANG_VERSION=.*/CLANG_VERSION=r450784e/' \
-         ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.constants
-    
-         sed -i '/^DEFCONFIG=gki_defconfig/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
-         sed -i '$a\DEFCONFIG=${{ env.DEFCONFIG_NAME }}' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
-         sed -i '/^POST_DEFCONFIG_CMDS="check_defconfig"/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
+          rm -rf .repo
+          rm -rf common
 
-         sed -i \
-          -e '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' \
-          -e '/^TRIM_NONLISTED_KMI=/d' \
-          -e '/^KMI_ENFORCED=/d' \
-          -e '$a\KMI_SYMBOL_LIST_STRICT_MODE=0' \
-          -e '$a\TRIM_NONLISTED_KMI=0' \
-          -e '$a\KMI_ENFORCED=0' \
-          -e '/^MODULES_ORDER=/d' \
-          -e '/^MODULES_LIST=/d' \
-         ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64
+          # Clean up old Clang versions
+          rm -rf prebuilts/clang/host/linux-x86/clang-3289846
+          rm -rf prebuilts/clang/host/linux-x86/clang-stable
+          
+          sed -i \
+           -e 's/^BRANCH=.*/BRANCH=android13-5.15/' \
+           -e 's/^CLANG_VERSION=.*/CLANG_VERSION=r450784e/' \
+          ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.constants
+         
+          sed -i '/^DEFCONFIG=gki_defconfig/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
+          sed -i '$a\DEFCONFIG=${{ env.DEFCONFIG_NAME }}' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
+          sed -i '/^POST_DEFCONFIG_CMDS="check_defconfig"/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
+
+          # Настройка для поддержки загружаемых модулей (RT3070 и др.)
+          sed -i \
+           -e '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' \
+           -e '/^TRIM_NONLISTED_KMI=/d' \
+           -e '/^KMI_ENFORCED=/d' \
+           -e '$a\KMI_SYMBOL_LIST_STRICT_MODE=0' \
+           -e '$a\TRIM_NONLISTED_KMI=0' \
+           -e '$a\KMI_ENFORCED=0' \
+           -e '/^MODULES_ORDER=/d' \
+           -e '/^MODULES_LIST=/d' \
+          ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64
 
       - name: "⚙️ Configure kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
         run: |
-          # Define the config file path
           CONFIG_FILE="arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
           
-          # Set localversion
           if [ -n "${{ github.event.inputs.localVersion }}" ]; then
             echo "CONFIG_LOCALVERSION=\"${{ github.event.inputs.localVersion }}\"" >> "$CONFIG_FILE"
           fi
           
-          CONFIG_FILE="arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
+          # Основные системные опции и конфигурация модулей RT3070 / RT2800USB
           cat >> "$CONFIG_FILE" << 'EOF'
           CONFIG_KALLSYMS=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
+
+          # Включение поддержки загружаемых модулей ядра
+          CONFIG_MODULES=y
+          CONFIG_MODULE_UNLOAD=y
+
+          # Сетевая подсистема и Wi-Fi (mac80211, cfg80211)
+          CONFIG_NETDEVICES=y
+          CONFIG_WLAN=y
+          CONFIG_CFG80211=m
+          CONFIG_MAC80211=m
+          CONFIG_MAC80211_RC_DEFAULT="minstrel_ht"
+
+          # USB-инфраструктура
+          CONFIG_USB_SUPPORT=y
+          CONFIG_USB=y
+          CONFIG_USB_NET_DRIVERS=m
+
+          # Драйверы Ralink RT2800USB / RT3070
+          CONFIG_RT2X00=m
+          CONFIG_RT2800USB=m
+          CONFIG_RT2800USB_RT33XX=y
+          CONFIG_RT2800USB_RT35XX=y
+          CONFIG_RT2800USB_RT53XX=y
+          CONFIG_RT2800USB_UNKNOWN=y
+          CONFIG_RT2800_LIB=m
+          CONFIG_RT2X00_LIB=m
+          CONFIG_RT2X00_LIB_USB=m
+          CONFIG_RT2X00_LIB_FIRMWARE=y
+          CONFIG_RT2X00_LIB_CRYPTO=y
+          CONFIG_RT2X00_LIB_LEDS=y
           EOF
-
-      - name: "📶 Setup QCACLD-3.0 WiFi Injection (sapphire)"
-        if: ${{ inputs.buildQcacldInjection == true }}
-        working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
-        run: |
-          set -e
-          QCACLD_PATH="${{ github.event.inputs.qcacldPath }}"
-          echo "📦 Cloning qcacld-3.0 from ${{ github.event.inputs.qcacldSourceURL }} (${{ github.event.inputs.qcacldBranch }}) into $QCACLD_PATH ..."
-
-          rm -rf "$QCACLD_PATH"
-          mkdir -p "$(dirname "$QCACLD_PATH")"
-          git clone --depth=1 --branch "${{ github.event.inputs.qcacldBranch }}" \
-            "${{ github.event.inputs.qcacldSourceURL }}" "$QCACLD_PATH"
-
-          # Apply the packet-injection patch if a URL was provided
-          if [ -n "${{ github.event.inputs.qcacldInjectionPatchURL }}" ]; then
-            echo "🔧 Downloading and applying injection patch..."
-            curl -fL "${{ github.event.inputs.qcacldInjectionPatchURL }}" -o /tmp/qcacld_injection.patch
-            (cd "$QCACLD_PATH" && patch -p1 < /tmp/qcacld_injection.patch) \
-              || echo "⚠️ Injection patch failed to apply cleanly — verify it matches this qcacld-3.0 branch/commit"
-          else
-            echo "ℹ️ No injection patch URL supplied — skipping patch step (only wiring up Kconfig)"
-          fi
-
-          # Wire monitor-mode / packet-injection related Kconfig options into the defconfig.
-          # NOTE: exact option names/availability depend on the qcacld-3.0 branch you use above —
-          # verify against that branch's Kconfig before relying on this for a real build.
-          CONFIG_FILE="arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          cat >> "$CONFIG_FILE" << 'EOF'
-          CONFIG_QCA_CLD_WLAN=m
-          CONFIG_CNSS2=y
-          CONFIG_CNSS_QCA6390=y
-          CONFIG_CNSS_GENL=y
-          CONFIG_WLAN_FEATURE_PACKET_CAPTURE_V2=y
-          CONFIG_QCA_MONITOR_2_0_SUPPORT=y
-          CONFIG_FEATURE_MONITOR_MODE_SUPPORT=y
-          EOF
-
-          echo "✅ qcacld-3.0 wired into $QCACLD_PATH with injection configs appended"
 
       - name: "🔧 Setup ReSukiSU"
         if: matrix.variant == 'ksu'
@@ -204,7 +169,6 @@ jobs:
           
           echo "✔ KSU installed successfully"
           
-          # Clone SUSFS4KSU for kernel patches only (not KSU integration)
           echo "📦 Cloning SUSFS4KSU for kernel patches..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
@@ -240,17 +204,14 @@ jobs:
           
           echo "📄 Forcing SUSFS source injection..."
           
-          # Always replace fs/susfs.c
           mkdir -p fs
           cp -f susfs4ksu/kernel_patches/fs/susfs.c fs/susfs.c
           echo "✔ Copied fs/susfs.c"
           
-          # Always replace include/linux/susfs.h
           mkdir -p include/linux
           cp -f susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/susfs.h
           echo "✔ Copied include/linux/susfs.h"
           
-          # Also install missing susfs_def.h
           if [ -f susfs4ksu/kernel_patches/include/linux/susfs_def.h ]; then
             cp -f susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/susfs_def.h
             echo "✔ Copied include/linux/susfs_def.h"
@@ -263,10 +224,8 @@ jobs:
             if [ -f "$f" ]; then echo "✔ Found: $f"; else echo "❌ Missing: $f"; fi
           done
           
-          # Clean up SUSFS repo (we only needed kernel patches, not KSU integration)
           rm -rf susfs4ksu
           
-          # Create symbolic link for drivers/kernelsu (if needed by build system)
           if [ ! -L "drivers/kernelsu" ]; then
             ln -sf ../KernelSU drivers/kernelsu
             echo "✔ Created drivers/kernelsu symlink"
@@ -314,8 +273,6 @@ jobs:
           
           echo "✅ KSU configs added"
 
-          echo "🎉 ReSukiSU installed and SUSFS for GKI android13-5.15 fully integrated!"
-
       - name: "🔨 Build kernel"
         working-directory: ${{ env.WORK_DIR }}
         run: |
@@ -325,13 +282,21 @@ jobs:
       - name: "📦 Prepare artifact"
         working-directory: ${{ env.WORK_DIR }}
         run: |
-          cp out/dist/Image Image.${{ matrix.variant }}
+          mkdir -p artifact_${{ matrix.variant }}
+          cp out/dist/Image artifact_${{ matrix.variant }}/Image.${{ matrix.variant }}
+          
+          # Сборка внешних модулей (.ko)
+          mkdir -p artifact_${{ matrix.variant }}/modules
+          find out/dist/ -name "*.ko" -exec cp {} artifact_${{ matrix.variant }}/modules/ \; || true
+          
+          echo "Найденные модули:"
+          ls -la artifact_${{ matrix.variant }}/modules/
 
-      - name: "📤 Upload kernel"
+      - name: "📤 Upload kernel artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ matrix.variant }}
-          path: ${{ env.WORK_DIR }}/Image.${{ matrix.variant }}
+          name: kernel-build-${{ matrix.variant }}
+          path: ${{ env.WORK_DIR }}/artifact_${{ matrix.variant }}/
           retention-days: 3
 
   Package-Kernels:
@@ -342,17 +307,20 @@ jobs:
       - name: "📥 Download artifacts"
         uses: actions/download-artifact@v4
         with:
-          path: ./kernels/
+          path: ./artifacts/
 
       - name: "📦 Create flashable ZIP"
         run: |
           BUILD_TIME=$(date +'%Y-%m-%d')
           git clone --depth=1 https://github.com/topnotchfreaks/AnyKernel3 -b master AnyKernel3
           
-          # Copy kernels
-          find kernels -name "Image.*" -exec cp {} AnyKernel3/ \;
+          # Копирование образов ядра в AnyKernel3
+          find artifacts -name "Image.*" -exec cp {} AnyKernel3/ \;
           
-          # Create ZIP
+          # Упаковка модулей в подкаталог modules/ для загрузки в систему/TWRP
+          mkdir -p AnyKernel3/modules
+          find artifacts -name "*.ko" -exec cp {} AnyKernel3/modules/ \;
+          
           ZIP_NAME="Anykernel3_ReSukiSU_${{ github.event.inputs.kernelBranch }}_${BUILD_TIME}.zip"
           cd AnyKernel3
           zip -r9 "../$ZIP_NAME" * -x .git/*
@@ -372,7 +340,7 @@ jobs:
         run: |
           if [[ -f "${{ env.ZIP_PATH }}" ]]; then
             curl -s -F document=@"${{ env.ZIP_PATH }}" \
-                 -F caption="✅ Kernel Build Complete (WildKSU) - $(date '+%Y-%m-%d %H:%M:%S')" \
+                 -F caption="✅ Kernel Build Complete (RT3070 Module Support Included) - $(date '+%Y-%m-%d %H:%M:%S')" \
                  -F chat_id=${{ secrets.TELEGRAM_USER_ID }} \
                  "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument"
           else
