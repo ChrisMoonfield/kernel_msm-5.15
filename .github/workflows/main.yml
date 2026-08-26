@@ -100,7 +100,7 @@ jobs:
           sed -i '$a\DEFCONFIG=${{ env.DEFCONFIG_NAME }}' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
           sed -i '/^POST_DEFCONFIG_CMDS="check_defconfig"/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
 
-          # Настройка для поддержки загружаемых модулей (RT3070 и др.)
+          # Настройка подсистемы модулей GKI
           sed -i \
            -e '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' \
            -e '/^TRIM_NONLISTED_KMI=/d' \
@@ -121,7 +121,6 @@ jobs:
             echo "CONFIG_LOCALVERSION=\"${{ github.event.inputs.localVersion }}\"" >> "$CONFIG_FILE"
           fi
           
-          # Основные системные опции и конфигурация модулей RT3070 / RT2800USB
           cat >> "$CONFIG_FILE" << 'EOF'
           CONFIG_KALLSYMS=y
           CONFIG_TMPFS_XATTR=y
@@ -131,19 +130,22 @@ jobs:
           CONFIG_MODULES=y
           CONFIG_MODULE_UNLOAD=y
 
-          # Сетевая подсистема и Wi-Fi (mac80211, cfg80211)
+          # Криптография и сетевая подсистема
           CONFIG_NETDEVICES=y
           CONFIG_WLAN=y
           CONFIG_CFG80211=m
           CONFIG_MAC80211=m
           CONFIG_MAC80211_RC_DEFAULT="minstrel_ht"
+          CONFIG_CRYPTO_ARC4=m
+          CONFIG_CRYPTO_ECB=m
+          CONFIG_CRYPTO_AES=m
 
           # USB-инфраструктура
           CONFIG_USB_SUPPORT=y
           CONFIG_USB=y
           CONFIG_USB_NET_DRIVERS=m
 
-          # Драйверы Ralink RT2800USB / RT3070
+          # Драйверы Ralink RT2800USB / RT3070 в виде отдельного модуля
           CONFIG_RT2X00=m
           CONFIG_RT2800USB=m
           CONFIG_RT2800USB_RT33XX=y
@@ -277,7 +279,7 @@ jobs:
         working-directory: ${{ env.WORK_DIR }}
         run: |
           LTO=thin BUILD_CONFIG=${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64 \
-          build/build.sh -j$(nproc --all)
+          build/build.sh -j$(nproc --all) V=1
 
       - name: "📦 Prepare artifact"
         working-directory: ${{ env.WORK_DIR }}
@@ -288,9 +290,6 @@ jobs:
           # Сборка внешних модулей (.ko)
           mkdir -p artifact_${{ matrix.variant }}/modules
           find out/dist/ -name "*.ko" -exec cp {} artifact_${{ matrix.variant }}/modules/ \; || true
-          
-          echo "Найденные модули:"
-          ls -la artifact_${{ matrix.variant }}/modules/
 
       - name: "📤 Upload kernel artifacts"
         uses: actions/upload-artifact@v4
@@ -314,12 +313,14 @@ jobs:
           BUILD_TIME=$(date +'%Y-%m-%d')
           git clone --depth=1 https://github.com/topnotchfreaks/AnyKernel3 -b master AnyKernel3
           
-          # Копирование образов ядра в AnyKernel3
+          # Копирование ядра и скомпилированных модулей .ko
           find artifacts -name "Image.*" -exec cp {} AnyKernel3/ \;
-          
-          # Упаковка модулей в подкаталог modules/ для загрузки в систему/TWRP
           mkdir -p AnyKernel3/modules
           find artifacts -name "*.ko" -exec cp {} AnyKernel3/modules/ \;
+
+          # Скачивание файла бинарной микропрограммы rt2870.bin
+          mkdir -p AnyKernel3/firmware
+          aria2c -s16 -x16 "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/rt2870.bin" -o AnyKernel3/firmware/rt2870.bin
           
           ZIP_NAME="Anykernel3_ReSukiSU_${{ github.event.inputs.kernelBranch }}_${BUILD_TIME}.zip"
           cd AnyKernel3
@@ -340,7 +341,7 @@ jobs:
         run: |
           if [[ -f "${{ env.ZIP_PATH }}" ]]; then
             curl -s -F document=@"${{ env.ZIP_PATH }}" \
-                 -F caption="✅ Kernel Build Complete (RT3070 Module Support Included) - $(date '+%Y-%m-%d %H:%M:%S')" \
+                 -F caption="✅ Kernel Build Complete (RT3070 Module & Firmware Included) - $(date '+%Y-%m-%d %H:%M:%S')" \
                  -F chat_id=${{ secrets.TELEGRAM_USER_ID }} \
                  "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument"
           else
