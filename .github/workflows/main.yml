@@ -103,7 +103,6 @@ jobs:
           # Настройки KMI в build.config.gki.aarch64
           GKI_CONFIG="${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64"
           
-          # Отключаем проверки KMI и обрезку неперечисленных символов
           sed -i '/^KMI_SYMBOL_LIST=/d' "$GKI_CONFIG"
           sed -i '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' "$GKI_CONFIG"
           sed -i '/^TRIM_NONLISTED_KMI=/d' "$GKI_CONFIG"
@@ -112,6 +111,10 @@ jobs:
           echo "KMI_SYMBOL_LIST_STRICT_MODE=0" >> "$GKI_CONFIG"
           echo "TRIM_NONLISTED_KMI=0" >> "$GKI_CONFIG"
           echo "KMI_ENFORCED=0" >> "$GKI_CONFIG"
+
+          # ИСПРАВЛЕНИЕ ОШИБКИ: Делаем чтение отсутствующих modules.order безопасным
+          cd ${{ env.kernelDir }}/${{ env.kernelName }}
+          find . -name "Makefile" -o -name "Kbuild" | xargs sed -i 's/\bcat \([^;]*modules\.order\)/cat \1 2>\/dev\/null || true/g'
 
       - name: "⚙️ Configure kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
