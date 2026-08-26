@@ -100,17 +100,18 @@ jobs:
           sed -i '$a\DEFCONFIG=${{ env.DEFCONFIG_NAME }}' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
           sed -i '/^POST_DEFCONFIG_CMDS="check_defconfig"/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
 
-          # Корректировка конфигурации сборки под внешние модули
-          sed -i \
-           -e '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' \
-           -e '/^TRIM_NONLISTED_KMI=/d' \
-           -e '/^KMI_ENFORCED=/d' \
-           -e '$a\KMI_SYMBOL_LIST_STRICT_MODE=0' \
-           -e '$a\TRIM_NONLISTED_KMI=0' \
-           -e '$a\KMI_ENFORCED=0' \
-           -e '/^MODULES_ORDER=/d' \
-           -e '/^MODULES_LIST=/d' \
-          ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64
+          # Настройки KMI в build.config.gki.aarch64
+          GKI_CONFIG="${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64"
+          
+          # Отключаем проверки KMI и обрезку неперечисленных символов
+          sed -i '/^KMI_SYMBOL_LIST=/d' "$GKI_CONFIG"
+          sed -i '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' "$GKI_CONFIG"
+          sed -i '/^TRIM_NONLISTED_KMI=/d' "$GKI_CONFIG"
+          sed -i '/^KMI_ENFORCED=/d' "$GKI_CONFIG"
+          
+          echo "KMI_SYMBOL_LIST_STRICT_MODE=0" >> "$GKI_CONFIG"
+          echo "TRIM_NONLISTED_KMI=0" >> "$GKI_CONFIG"
+          echo "KMI_ENFORCED=0" >> "$GKI_CONFIG"
 
       - name: "⚙️ Configure kernel"
         working-directory: ./${{ env.kernelDir }}/${{ env.kernelName }}
@@ -283,9 +284,6 @@ jobs:
         working-directory: ${{ env.WORK_DIR }}
         run: |
           LTO=thin \
-          KMI_SYMBOL_LIST_STRICT_MODE=0 \
-          TRIM_NONLISTED_KMI=0 \
-          KMI_ENFORCED=0 \
           BUILD_CONFIG=${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64 \
           build/build.sh -j$(nproc --all)
 
