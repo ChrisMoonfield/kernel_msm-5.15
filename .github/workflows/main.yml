@@ -87,7 +87,7 @@ jobs:
           rm -rf .repo
           rm -rf common
 
-          # Clean up old Clang versions
+          # Очистка старых версий Clang
           rm -rf prebuilts/clang/host/linux-x86/clang-3289846
           rm -rf prebuilts/clang/host/linux-x86/clang-stable
           
@@ -100,7 +100,7 @@ jobs:
           sed -i '$a\DEFCONFIG=${{ env.DEFCONFIG_NAME }}' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
           sed -i '/^POST_DEFCONFIG_CMDS="check_defconfig"/d' ${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki
 
-          # Настройка подсистемы модулей GKI
+          # Корректировка конфигурации сборки под внешние модули
           sed -i \
            -e '/^KMI_SYMBOL_LIST_STRICT_MODE=/d' \
            -e '/^TRIM_NONLISTED_KMI=/d' \
@@ -126,11 +126,15 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
 
-          # Включение поддержки загружаемых модулей ядра
+          # Разрешение неперечисленных символов и неиспользуемых экспортов
+          CONFIG_ALLOW_DEV_COREDUMP=y
+          CONFIG_UNUSED_SYMBOLS=y
+
+          # Поддержка загружаемых модулей ядра
           CONFIG_MODULES=y
           CONFIG_MODULE_UNLOAD=y
 
-          # Криптография и сетевая подсистема
+          # Сетевая подсистема и криптография
           CONFIG_NETDEVICES=y
           CONFIG_WLAN=y
           CONFIG_CFG80211=m
@@ -145,7 +149,7 @@ jobs:
           CONFIG_USB=y
           CONFIG_USB_NET_DRIVERS=m
 
-          # Драйверы Ralink RT2800USB / RT3070 в виде отдельного модуля
+          # Драйверы Ralink RT2800USB / RT3070 в виде отдельных модулей
           CONFIG_RT2X00=m
           CONFIG_RT2800USB=m
           CONFIG_RT2800USB_RT33XX=y
@@ -278,8 +282,12 @@ jobs:
       - name: "🔨 Build kernel"
         working-directory: ${{ env.WORK_DIR }}
         run: |
-          LTO=thin BUILD_CONFIG=${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64 \
-          build/build.sh -j$(nproc --all) V=1
+          LTO=thin \
+          KMI_SYMBOL_LIST_STRICT_MODE=0 \
+          TRIM_NONLISTED_KMI=0 \
+          KMI_ENFORCED=0 \
+          BUILD_CONFIG=${{ env.kernelDir }}/${{ env.kernelName }}/build.config.gki.aarch64 \
+          build/build.sh -j$(nproc --all)
 
       - name: "📦 Prepare artifact"
         working-directory: ${{ env.WORK_DIR }}
@@ -287,9 +295,9 @@ jobs:
           mkdir -p artifact_${{ matrix.variant }}
           cp out/dist/Image artifact_${{ matrix.variant }}/Image.${{ matrix.variant }}
           
-          # Сборка внешних модулей (.ko)
+          # Сборка и поиск скомпилированных внешних модулей (.ko)
           mkdir -p artifact_${{ matrix.variant }}/modules
-          find out/dist/ -name "*.ko" -exec cp {} artifact_${{ matrix.variant }}/modules/ \; || true
+          find out/ -name "*.ko" -exec cp {} artifact_${{ matrix.variant }}/modules/ \; || true
 
       - name: "📤 Upload kernel artifacts"
         uses: actions/upload-artifact@v4
@@ -313,8 +321,10 @@ jobs:
           BUILD_TIME=$(date +'%Y-%m-%d')
           git clone --depth=1 https://github.com/topnotchfreaks/AnyKernel3 -b master AnyKernel3
           
-          # Копирование ядра и скомпилированных модулей .ko
+          # Копирование образов ядра
           find artifacts -name "Image.*" -exec cp {} AnyKernel3/ \;
+          
+          # Упаковка скомпилированных модулей .ko
           mkdir -p AnyKernel3/modules
           find artifacts -name "*.ko" -exec cp {} AnyKernel3/modules/ \;
 
